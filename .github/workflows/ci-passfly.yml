@@ -106,26 +106,37 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build (y push a ECR en main)
+      # 1) Construir en local (la imagen queda en el daemon de Docker del runner)
+      - name: Build de la imagen
         uses: docker/build-push-action@v6
         with:
           context: passfly
-          push: ${{ env.PUSH == 'true' }}
-          load: ${{ env.PUSH != 'true' }}
-          tags: ${{ env.PUSH == 'true' && format('{0}/passfly:{1}', steps.ecr.outputs.registry, github.sha) || format('passfly:{0}', github.sha) }}
+          push: false
+          load: true
+          tags: passfly:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 2) SBOM sobre la copia local (no depende de descargar nada desde ECR)
       - name: SBOM de la imagen (SPDX)
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.PUSH == 'true' && format('{0}/passfly:{1}', steps.ecr.outputs.registry, github.sha) || format('passfly:{0}', github.sha) }}
+          image: passfly:${{ github.sha }}
           format: spdx-json
           output-file: sbom-image.spdx.json
           upload-artifact: false
+
+      # 3) Publicar en ECR solo en main y solo si todo lo anterior pasó
+      - name: Push a ECR
+        if: ${{ env.PUSH == 'true' }}
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker tag "passfly:${GITHUB_SHA}" "${REGISTRY}/passfly:${GITHUB_SHA}"
+          docker push "${REGISTRY}/passfly:${GITHUB_SHA}"
 
       - uses: actions/upload-artifact@v4
         with:
