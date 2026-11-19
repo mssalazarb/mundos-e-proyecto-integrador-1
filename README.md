@@ -17,7 +17,8 @@ Generador de contraseñas seguras desplegado en AWS con CI/CD en GitHub Actions.
 
 | Workflow | Se activa con | Qué hace |
 |---|---|---|
-| **CI PassFly** (`ci-passfly.yml`) | PR o push que toque `passfly/**` | lint → test → `npm audit` + Snyk → build Docker + SBOM → **push a ECR solo en `main`** y si todo pasó |
+| **Bootstrap** (`bootstrap.yml`) | Manual, una vez | Crea desde GitHub el bucket de estado, ECR, OIDC y roles IAM; luego lanza CI |
+| **CI PassFly** (`ci-passfly.yml`) | PR o push que toque `passfly/**` (o manual) | lint → test → `npm audit` + Snyk → build Docker + SBOM → **push a ECR solo en `main`** y si todo pasó |
 | **CD Deploy** (`cd-deploy.yml`) | CI exitoso en `main`, o manual | `terraform apply` con la imagen recién publicada: despliega todo |
 | **Terraform** (`terraform.yml`) | PR o push que toque `terraform/**` | PR: fmt + validate + **plan** (solo lectura). Push a `main`: **apply** reutilizando la imagen ya desplegada |
 

@@ -1,5 +1,5 @@
 output "state_bucket" {
-  description = "Bucket S3 del estado remoto -> variable de GitHub TF_STATE_BUCKET"
+  description = "Bucket S3 del estado remoto"
   value       = aws_s3_bucket.tfstate.bucket
 }
 
@@ -9,21 +9,21 @@ output "ecr_repository_url" {
 }
 
 output "ci_role_arn" {
-  description = "-> variable de GitHub AWS_ROLE_ARN_CI"
+  description = "Rol de CI (sube imágenes a ECR)"
   value       = aws_iam_role.ci.arn
 }
 
 output "cd_role_arn" {
-  description = "-> variable de GitHub AWS_ROLE_ARN_CD"
+  description = "Rol de CD (terraform apply)"
   value       = aws_iam_role.cd.arn
 }
 
 output "plan_role_arn" {
-  description = "-> variable de GitHub AWS_ROLE_ARN_PLAN (solo lectura, pull requests)"
+  description = "Rol de solo lectura (terraform plan en pull requests)"
   value       = aws_iam_role.plan.arn
 }
 
 output "aws_region" {
-  description = "-> variable de GitHub AWS_REGION"
+  description = "Región"
   value       = var.aws_region
 }

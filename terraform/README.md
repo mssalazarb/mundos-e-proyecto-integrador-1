@@ -11,46 +11,54 @@ GitHub Actions ──OIDC──▶ AWS
 
 | Directorio | Contenido | Quién lo ejecuta |
 |---|---|---|
-| `bootstrap/` | Bucket S3 de estado, repositorio ECR, proveedor OIDC y roles IAM (`passfly-github-ci`, `-plan`, `-cd`) | Tú, **una vez**, a mano |
+| `bootstrap/` | Bucket S3 de estado, repositorio ECR, proveedor OIDC y roles IAM (`passfly-github-ci`, `-plan`, `-cd`) | Workflow **Bootstrap**, una vez |
 | `main/` | VPC, subred pública, security group, rol de instancia, EC2 Ubuntu 24.04, IP elástica | Los pipelines |
 | `monitoring/` | `prometheus.yml` y dashboard/provisioning de Grafana (los lee `main/` y el compose local) | — |
 
 Seguridad: sin claves de AWS en GitHub (OIDC) y **tres roles con mínimo privilegio**: CI solo sube a ECR, PLAN solo lee (pull requests) y CD despliega únicamente desde el environment `production`. Además: sin SSH (acceso por SSM), IMDSv2 obligatorio, disco cifrado, imágenes ECR inmutables con escaneo, Prometheus no expuesto y Grafana restringido por CIDR.
 
-## Puesta en marcha
+## Puesta en marcha (todo desde GitHub)
 
-### 1. Bootstrap (una sola vez)
+Nada se ejecuta en tu máquina: el bucket de estado, ECR, OIDC y los roles los crea el workflow **Bootstrap**.
+
+### 1. Crear el repositorio y subir el código
 
 ```bash
-cd terraform/bootstrap
-terraform init
-terraform apply -var="github_owner=TU_USUARIO_GITHUB" -var="github_repo=NOMBRE_DEL_REPO"
-# Si tu cuenta ya tiene el proveedor OIDC de GitHub: -var="create_oidc_provider=false"
-terraform output
+gh auth login
+gh repo create passfly --private --source . --push   # desde la raíz del monorepo
 ```
 
-### 2. Configurar GitHub
+El primer push ejecuta CI: lint, test y seguridad pasan, pero el job `build` fallará al publicar en ECR porque aún no existe el rol. Es esperado; Bootstrap lo relanza más tarde.
 
-**Settings → Secrets and variables → Actions → Variables**
+### 2. Cargar credenciales y variables en GitHub
 
-| Variable | Valor (salida del bootstrap) |
-|---|---|
-| `AWS_REGION` | `aws_region` |
-| `AWS_ROLE_ARN_CI` | `ci_role_arn` |
-| `AWS_ROLE_ARN_PLAN` | `plan_role_arn` |
-| `AWS_ROLE_ARN_CD` | `cd_role_arn` |
-| `TF_STATE_BUCKET` | `state_bucket` |
-| `ADMIN_CIDR` *(recomendada)* | tu IP, p. ej. `203.0.113.7/32` |
+El **único** punto de arranque con claves estáticas: GitHub necesita alguna credencial para crear el primer rol OIDC. Crea una clave de acceso **nueva** para tu usuario IAM (o uno dedicado) y úsala solo para Bootstrap.
 
-Secreto opcional: `SNYK_TOKEN` (token gratuito de snyk.io).
-Crea el environment **production** (Settings → Environments), idealmente con un revisor requerido.
+| Tipo | Nombre | Valor |
+|---|---|---|
+| Secreto (repo o environment `bootstrap`) | `AWS_ACCESS_KEY_ID` | clave de acceso |
+| Secreto (repo o environment `bootstrap`) | `AWS_SECRET_ACCESS_KEY` | clave secreta |
+| Variable | `AWS_ACCOUNT_ID` | ID de tu cuenta de 12 dígitos |
+| Variable | `AWS_REGION` | p. ej. `us-east-1` |
+| Variable *(recomendada)* | `ADMIN_CIDR` | tu IP, p. ej. `203.0.113.7/32` |
+| Secreto *(opcional)* | `SNYK_TOKEN` | token gratuito de snyk.io |
 
-### 3. Primer despliegue
+```bash
+gh secret set AWS_ACCESS_KEY_ID
+gh secret set AWS_SECRET_ACCESS_KEY
+gh variable set AWS_ACCOUNT_ID --body 123456789012
+gh variable set AWS_REGION --body us-east-1
+```
 
-Haz push a `main` con un cambio en `passfly/`: CI publica la imagen y CD despliega todo.
-(Alternativa: Actions → **CD Deploy** → *Run workflow* con un `image_tag` ya existente en ECR.)
+Los nombres de los roles y del bucket son fijos (`passfly-github-*`, `passfly-tfstate-<cuenta>-<región>`), así que no hay que copiar ninguna salida de Terraform a GitHub.
 
-> Hasta que exista un primer despliegue, el workflow **Terraform** no sabe qué imagen usar y lo indica con un error claro. Después de eso reutiliza el tag guardado en el estado.
+### 3. Ejecutar Bootstrap
+
+Actions → **Bootstrap** → *Run workflow*. Crea el bucket (con estado local temporal que migra a S3 en el mismo job), ECR, proveedor OIDC y los roles. Al terminar **lanza CI PassFly**, que publica la primera imagen, y CD Deploy despliega la infraestructura.
+
+> Si CD Deploy no arranca solo tras ese CI, lánzalo a mano: Actions → **CD Deploy** → *Run workflow* (sin tag: usa la imagen más reciente de ECR).
+
+Después puedes **borrar los secretos `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`** y la clave en IAM: de aquí en adelante todo usa OIDC.
 
 ### 4. Día a día
 
@@ -60,21 +68,15 @@ Haz push a `main` con un cambio en `passfly/`: CI publica la imagen y CD desplie
 | `terraform/` | Terraform: plan en el PR, `apply` al integrar en `main`, misma imagen |
 | Ambos en un commit | Corren los dos y se serializan; el resultado final usa la imagen nueva |
 
-Contraseña de Grafana (usuario `admin`):
-
-```bash
-cd terraform/main
-terraform init -backend-config="bucket=<state_bucket>" -backend-config="key=passfly/terraform.tfstate" -backend-config="region=<region>"
-terraform output -raw grafana_admin_password
-```
+La URL de la app y de Grafana aparecen en el resumen del job de despliegue. La contraseña de Grafana (usuario `admin`) está en el estado remoto: `terraform output -raw grafana_admin_password` desde `terraform/main` tras un `terraform init` con el backend S3.
 
 ### 5. Destruir (evita costos)
 
-Actions → **CD Deploy** → *Run workflow* → acción `destroy`. Después, si quieres borrar todo, `terraform destroy` en `bootstrap/` (vacía antes el bucket de estado).
+Actions → **CD Deploy** → *Run workflow* → acción `destroy`. Después, si quieres borrar todo, vacía el bucket de estado y borra con `terraform destroy` los recursos de `bootstrap/` (requiere credenciales de administrador).
 
 ## Notas
 
-- `bootstrap/` **no** lo ejecuta ningún pipeline: crea los propios roles que usan los pipelines. Los cambios ahí solo se validan en CI.
+- `bootstrap/` solo se ejecuta con el workflow manual **Bootstrap** (usa claves estáticas porque crea los propios roles OIDC). Los cambios en ese directorio únicamente se validan en CI.
 - Cada imagen nueva (o cambio en `monitoring/` o en el cloud-init) **reemplaza la instancia** (`user_data_replace_on_change`); la IP elástica se conserva. Hay unos minutos de indisponibilidad.
 - Costo aproximado: una `t3.micro`, 20 GB de disco y una IP elástica. Destruye el stack al terminar la demo.
 - `ec2:*` en el rol CD es amplio a propósito para simplificar; en producción conviene acotarlo.

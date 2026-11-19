@@ -24,10 +24,10 @@ permissions:
 
 jobs:
   deploy:
-    # Solo si CI terminó bien tras un push a main (o si se lanza a mano)
+    # Solo si CI terminó bien en main (push o ejecución manual), o si se lanza a mano
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request') }}
     uses: ./.github/workflows/_terraform-apply.yml
     with:
       action: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'apply' }}

@@ -1,0 +1,121 @@
+name: Bootstrap
+
+# Se ejecuta UNA vez (y solo si cambias terraform/bootstrap). Crea desde GitHub:
+#   bucket S3 del estado · repositorio ECR · proveedor OIDC · roles IAM (ci, plan, cd)
+# Es el único workflow que usa claves estáticas de AWS; el resto usa OIDC.
+on:
+  workflow_dispatch:
+    inputs:
+      create_oidc_provider:
+        description: "Crear el proveedor OIDC de GitHub (false solo si tu cuenta ya tiene uno ajeno a este proyecto)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: write # para lanzar CI al terminar y publicar la primera imagen
+
+concurrency:
+  group: bootstrap
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    # Los secretos pueden vivir en este environment (con revisor requerido) o en el repositorio
+    environment: bootstrap
+    defaults:
+      run:
+        working-directory: terraform/bootstrap
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+          terraform_wrapper: false
+
+      - name: Verificar cuenta de AWS y calcular bucket de estado
+        id: acct
+        run: |
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          if [ "$account" != "${{ vars.AWS_ACCOUNT_ID }}" ]; then
+            echo "::error::Las credenciales pertenecen a la cuenta $account, pero AWS_ACCOUNT_ID=${{ vars.AWS_ACCOUNT_ID }}"
+            exit 1
+          fi
+          echo "bucket=passfly-tfstate-${account}-${AWS_REGION}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init (estado local si es la primera vez)
+        id: init
+        env:
+          BUCKET: ${{ steps.acct.outputs.bucket }}
+        run: |
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "first=false" >> "$GITHUB_OUTPUT"
+            terraform init \
+              -backend-config="bucket=$BUCKET" \
+              -backend-config="key=passfly/bootstrap.tfstate" \
+              -backend-config="region=$AWS_REGION"
+          else
+            echo "first=true" >> "$GITHUB_OUTPUT"
+            echo "El bucket de estado aún no existe: primera ejecución, estado local temporal."
+            cat > backend_override.tf <<'TF'
+          terraform {
+            backend "local" {
+              path = "bootstrap.local.tfstate"
+            }
+          }
+          TF
+            terraform init
+          fi
+
+      - run: terraform validate
+
+      - name: Terraform apply
+        run: |
+          terraform apply -auto-approve \
+            -var="aws_region=$AWS_REGION" \
+            -var="github_owner=${{ github.repository_owner }}" \
+            -var="github_repo=${{ github.event.repository.name }}" \
+            -var="create_oidc_provider=${{ inputs.create_oidc_provider }}"
+
+      - name: Migrar el estado al bucket S3 recién creado
+        if: ${{ steps.init.outputs.first == 'true' }}
+        env:
+          BUCKET: ${{ steps.acct.outputs.bucket }}
+        run: |
+          rm -f backend_override.tf
+          terraform init -migrate-state -force-copy \
+            -backend-config="bucket=$BUCKET" \
+            -backend-config="key=passfly/bootstrap.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          terraform state list | head -n 5
+          aws s3api head-object --bucket "$BUCKET" --key passfly/bootstrap.tfstate >/dev/null
+          echo "Estado migrado a s3://$BUCKET/passfly/bootstrap.tfstate"
+
+      - name: Resumen
+        run: |
+          {
+            echo "### Bootstrap completado"
+            echo "- Bucket de estado: \`$(terraform output -raw state_bucket)\`"
+            echo "- ECR: \`$(terraform output -raw ecr_repository_url)\`"
+            echo "- Rol CI: \`$(terraform output -raw ci_role_arn)\`"
+            echo "- Rol PLAN: \`$(terraform output -raw plan_role_arn)\`"
+            echo "- Rol CD: \`$(terraform output -raw cd_role_arn)\`"
+            echo ""
+            echo "Ya puedes borrar los secretos \`AWS_ACCESS_KEY_ID\` y \`AWS_SECRET_ACCESS_KEY\` (y la clave en IAM)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publica la primera imagen; al terminar, CD Deploy se encadena solo
+      - name: Lanzar CI PassFly (primera imagen)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci-passfly.yml --repo "$GITHUB_REPOSITORY" --ref main
