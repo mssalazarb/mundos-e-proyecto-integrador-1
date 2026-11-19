@@ -1,0 +1,17 @@
+# Node
+node_modules/
+sbom*.json
+.env
+*.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+terraform.tfvars
+
+# Material del curso (no publicar)
+*.pdf
+.DS_Store

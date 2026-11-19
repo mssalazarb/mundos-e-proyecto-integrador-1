@@ -1,0 +1,105 @@
+name: Terraform apply (reutilizable)
+
+# Lo usan "CD Deploy" y "Terraform". Ejecuta plan + apply/destroy sobre terraform/main.
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: "apply o destroy"
+        type: string
+        default: apply
+      image_tag:
+        description: "Tag de la imagen en ECR. Vacío = reutilizar el tag desplegado (leído del estado)"
+        type: string
+        default: ""
+      ref:
+        description: "Commit a desplegar"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    # Protege el despliegue; el rol de AWS solo confía en este environment
+    environment: production
+    # Nunca dos despliegues a la vez sobre el mismo estado
+    concurrency:
+      group: terraform-passfly
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: terraform/main
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_CD }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=passfly/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+
+      - run: terraform fmt -check -recursive
+      - run: terraform validate
+
+      - name: Resolver tag de imagen
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then
+            tag="$(terraform output -raw image_tag 2>/dev/null || true)"
+            echo "Reutilizando el tag desplegado: ${tag:-<ninguno>}"
+          fi
+          if ! [[ "$tag" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            echo "::error::No hay tag de imagen. Es el primer despliegue: ejecuta el workflow 'CD Deploy' indicando image_tag, o haz push de un cambio en passfly/."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform plan
+        env:
+          ACTION: ${{ inputs.action }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ADMIN_CIDR: ${{ vars.ADMIN_CIDR || '0.0.0.0/0' }}
+        run: |
+          flags=""
+          [ "$ACTION" = "destroy" ] && flags="-destroy"
+          terraform plan -out=tfplan $flags \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="image_tag=$TAG" \
+            -var="admin_cidr=$ADMIN_CIDR"
+
+      - name: Terraform apply
+        run: terraform apply tfplan
+
+      - name: Resumen del despliegue
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+          {
+            echo "### PassFly desplegado"
+            echo "- App: $(terraform output -raw app_url)"
+            echo "- Grafana: $(terraform output -raw grafana_url) (usuario \`admin\`)"
+            echo "- Imagen: \`$(terraform output -raw deployed_image)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

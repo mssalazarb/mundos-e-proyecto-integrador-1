@@ -1,0 +1,133 @@
+name: CI PassFly
+
+# Valida, prueba, escanea y empaqueta la app. Solo corre si cambia passfly/.
+on:
+  pull_request:
+    paths:
+      - "passfly/**"
+      - ".github/workflows/ci-passfly.yml"
+  push:
+    branches: [main]
+    paths:
+      - "passfly/**"
+      - ".github/workflows/ci-passfly.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-passfly-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: passfly
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: passfly/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: passfly/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  security:
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: passfly/package-lock.json
+      - run: npm ci
+      - name: npm audit (dependencias de producción)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Snyk (dependencias)
+        # Se omite si no hay token (p. ej. PRs desde forks)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: snyk/actions/node@master
+        with:
+          args: --severity-threshold=high --file=passfly/package.json
+
+  build:
+    needs: [lint, test, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC hacia AWS
+    env:
+      # Solo se publica en ECR al integrar en main; en PRs únicamente se construye
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: passfly/package-lock.json
+      - run: npm ci
+
+      - name: SBOM de dependencias (CycloneDX)
+        run: npm run sbom
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Credenciales AWS (OIDC)
+        if: ${{ env.PUSH == 'true' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_CI }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login en ECR
+        if: ${{ env.PUSH == 'true' }}
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build (y push a ECR en main)
+        uses: docker/build-push-action@v6
+        with:
+          context: passfly
+          push: ${{ env.PUSH == 'true' }}
+          load: ${{ env.PUSH != 'true' }}
+          tags: ${{ env.PUSH == 'true' && format('{0}/passfly:{1}', steps.ecr.outputs.registry, github.sha) || format('passfly:{0}', github.sha) }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: SBOM de la imagen (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.PUSH == 'true' && format('{0}/passfly:{1}', steps.ecr.outputs.registry, github.sha) || format('passfly:{0}', github.sha) }}
+          format: spdx-json
+          output-file: sbom-image.spdx.json
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            passfly/sbom.cdx.json
+            sbom-image.spdx.json

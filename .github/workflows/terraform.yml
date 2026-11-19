@@ -1,0 +1,102 @@
+name: Terraform
+
+# Solo infraestructura: se activa únicamente si cambia terraform/.
+#  - Pull request: fmt + validate + plan (solo lectura)
+#  - Push a main:  fmt + validate + apply, reutilizando la imagen ya desplegada
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/_terraform-apply.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/_terraform-apply.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+      - run: terraform fmt -check -recursive terraform
+      - name: Validate (bootstrap y main)
+        run: |
+          for dir in terraform/bootstrap terraform/main; do
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+          done
+
+  plan:
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: terraform/main
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_PLAN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=passfly/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+
+      - name: Terraform plan (sin bloqueo, solo lectura)
+        env:
+          ADMIN_CIDR: ${{ vars.ADMIN_CIDR || '0.0.0.0/0' }}
+        run: |
+          tag="$(terraform output -raw image_tag 2>/dev/null || true)"
+          if [ -z "$tag" ]; then
+            echo "::warning::Aún no hay despliegue previo; se omite el plan. Haz el primer despliegue con 'CD Deploy'."
+            exit 0
+          fi
+          terraform plan -lock=false -no-color \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="image_tag=$tag" \
+            -var="admin_cidr=$ADMIN_CIDR" | tee plan.txt
+          {
+            echo "### Terraform plan"
+            echo '```'
+            tail -n 40 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    if: ${{ github.event_name == 'push' }}
+    needs: validate
+    uses: ./.github/workflows/_terraform-apply.yml
+    with:
+      action: apply
+      ref: ${{ github.sha }}
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write

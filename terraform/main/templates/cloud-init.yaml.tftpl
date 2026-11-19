@@ -1,0 +1,67 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - amazon-ecr-credential-helper
+
+write_files:
+  - path: /root/.docker/config.json
+    permissions: "0600"
+    content: |
+      {"credsStore": "ecr-login"}
+
+  - path: /opt/passfly/.env
+    permissions: "0600"
+    content: |
+      GRAFANA_ADMIN_PASSWORD=${grafana_password}
+
+  - path: /opt/passfly/docker-compose.yml
+    permissions: "0644"
+    content: |
+      services:
+        passfly:
+          image: ${image}
+          restart: unless-stopped
+          ports:
+            - "80:3000"
+        prometheus:
+          image: prom/prometheus:v2.55.1
+          restart: unless-stopped
+          volumes:
+            - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+          ports:
+            - "127.0.0.1:9090:9090"
+        grafana:
+          image: grafana/grafana:11.3.0
+          restart: unless-stopped
+          environment:
+            GF_SECURITY_ADMIN_PASSWORD: $${GRAFANA_ADMIN_PASSWORD}
+            GF_USERS_ALLOW_SIGN_UP: "false"
+          volumes:
+            - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+            - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+          ports:
+            - "3001:3000"
+          depends_on:
+            - prometheus
+
+  - path: /opt/passfly/monitoring/prometheus.yml
+    encoding: gz+b64
+    content: ${prometheus_yml}
+
+  - path: /opt/passfly/monitoring/grafana/provisioning/datasources/datasource.yml
+    encoding: gz+b64
+    content: ${datasource_yml}
+
+  - path: /opt/passfly/monitoring/grafana/provisioning/dashboards/dashboards.yml
+    encoding: gz+b64
+    content: ${dashboards_yml}
+
+  - path: /opt/passfly/monitoring/grafana/dashboards/passfly.json
+    encoding: gz+b64
+    content: ${dashboard_json}
+
+runcmd:
+  - systemctl enable --now docker
+  - cd /opt/passfly && docker compose up -d

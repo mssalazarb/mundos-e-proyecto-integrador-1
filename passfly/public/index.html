@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PassFly · Generador de contraseñas seguras</title>
+  <meta name="description" content="Genera contraseñas seguras y aleatorias sin registro.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Pass<span>Fly</span></h1>
+    <p class="subtitle">Contraseñas seguras y aleatorias. Sin registro, sin almacenamiento.</p>
+
+    <form id="form" novalidate>
+      <div class="output">
+        <output id="password" aria-live="polite" tabindex="0">—</output>
+        <button type="button" id="copy" class="secondary" disabled>Copiar</button>
+      </div>
+
+      <div class="strength" aria-live="polite">
+        <div class="bar"><div id="bar-fill"></div></div>
+        <span id="strength-text">Fortaleza</span>
+      </div>
+
+      <label class="slider">
+        <span>Longitud: <strong id="length-value">16</strong></span>
+        <input type="range" id="length" min="8" max="128" value="16">
+      </label>
+
+      <fieldset>
+        <legend>Tipos de caracteres</legend>
+        <label><input type="checkbox" id="lowercase" checked> Minúsculas (a-z)</label>
+        <label><input type="checkbox" id="uppercase" checked> Mayúsculas (A-Z)</label>
+        <label><input type="checkbox" id="numbers" checked> Números (0-9)</label>
+        <label><input type="checkbox" id="symbols" checked> Símbolos (!@#$…)</label>
+        <label><input type="checkbox" id="excludeAmbiguous"> Excluir ambiguos (O, 0, I, l, 1)</label>
+      </fieldset>
+
+      <button type="submit" id="generate">Generar contraseña</button>
+      <p id="error" class="error" role="alert" hidden></p>
+    </form>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

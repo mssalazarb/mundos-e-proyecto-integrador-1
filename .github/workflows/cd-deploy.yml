@@ -1,0 +1,36 @@
+name: CD Deploy
+
+# Despliegue completo: aplica Terraform con la imagen recién publicada por CI.
+on:
+  workflow_run:
+    workflows: ["CI PassFly"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Acción de Terraform"
+        type: choice
+        options: [apply, destroy]
+        default: apply
+      image_tag:
+        description: "Tag de la imagen en ECR (vacío = el ya desplegado)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    # Solo si CI terminó bien tras un push a main (o si se lanza a mano)
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
+    uses: ./.github/workflows/_terraform-apply.yml
+    with:
+      action: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'apply' }}
+      image_tag: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || github.event.workflow_run.head_sha }}
+      ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+    secrets: inherit
