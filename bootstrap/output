@@ -1,0 +1,7 @@
+Bootstrap completado
+Bucket de estado: passfly-tfstate-782402091617-us-east-1
+ECR: 782402091617.dkr.ecr.us-east-1.amazonaws.com/passfly
+Rol CI: arn:aws:iam::782402091617:role/passfly-github-ci
+Rol PLAN: arn:aws:iam::782402091617:role/passfly-github-plan
+Rol CD: arn:aws:iam::782402091617:role/passfly-github-cd
+Ya puedes borrar los secretos AWS_ACCESS_KEY_ID y AWS_SECRET_ACCESS_KEY (y la clave en IAM).

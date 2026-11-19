@@ -88,6 +88,14 @@ data "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
+  # GitHub puede emitir el "sub" con o sin los IDs numéricos de propietario y repo:
+  #   repo:OWNER/REPO:...            (clásico)
+  #   repo:OWNER@123/REPO@456:...    (con IDs inmutables)
+  sub_prefixes = [
+    "repo:${local.repo_full}",
+    "repo:${var.github_owner}@*/${var.github_repo}@*",
+  ]
+
   oidc_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 }
 
@@ -108,9 +116,9 @@ data "aws_iam_policy_document" "trust_ci" {
 
     # CI solo publica imágenes desde la rama main
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.repo_full}:ref:refs/heads/main"]
+      values   = [for p in local.sub_prefixes : "${p}:ref:refs/heads/main"]
     }
   }
 }
@@ -132,9 +140,9 @@ data "aws_iam_policy_document" "trust_cd" {
 
     # CD solo desde el environment protegido
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.repo_full}:environment:${var.github_environment}"]
+      values   = [for p in local.sub_prefixes : "${p}:environment:${var.github_environment}"]
     }
   }
 }
@@ -250,9 +258,9 @@ data "aws_iam_policy_document" "trust_plan" {
     }
 
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.repo_full}:pull_request"]
+      values   = [for p in local.sub_prefixes : "${p}:pull_request"]
     }
   }
 }

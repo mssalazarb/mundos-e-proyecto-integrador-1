@@ -55,7 +55,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/passfly-github-plan
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -65,9 +65,9 @@ jobs:
       - name: Terraform init
         run: |
           terraform init \
-            -backend-config="bucket=passfly-tfstate-${{ vars.AWS_ACCOUNT_ID }}-${{ vars.AWS_REGION }}" \
+            -backend-config="bucket=passfly-tfstate-${{ vars.AWS_ACCOUNT_ID }}-${{ vars.AWS_REGION || 'us-east-1' }}" \
             -backend-config="key=passfly/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+            -backend-config="region=${{ vars.AWS_REGION || 'us-east-1' }}"
 
       - name: Terraform plan (sin bloqueo, solo lectura)
         env:
@@ -79,7 +79,7 @@ jobs:
             exit 0
           fi
           terraform plan -lock=false -no-color \
-            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="aws_region=${{ vars.AWS_REGION || 'us-east-1' }}" \
             -var="image_tag=$tag" \
             -var="admin_cidr=$ADMIN_CIDR" | tee plan.txt
           {

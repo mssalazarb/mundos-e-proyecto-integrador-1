@@ -45,7 +45,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/passfly-github-cd
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -55,9 +55,9 @@ jobs:
       - name: Terraform init
         run: |
           terraform init \
-            -backend-config="bucket=passfly-tfstate-${{ vars.AWS_ACCOUNT_ID }}-${{ vars.AWS_REGION }}" \
+            -backend-config="bucket=passfly-tfstate-${{ vars.AWS_ACCOUNT_ID }}-${{ vars.AWS_REGION || 'us-east-1' }}" \
             -backend-config="key=passfly/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+            -backend-config="region=${{ vars.AWS_REGION || 'us-east-1' }}"
 
       - run: terraform fmt -check -recursive
       - run: terraform validate
@@ -94,7 +94,7 @@ jobs:
           flags=""
           [ "$ACTION" = "destroy" ] && flags="-destroy"
           terraform plan -out=tfplan $flags \
-            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="aws_region=${{ vars.AWS_REGION || 'us-east-1' }}" \
             -var="image_tag=$TAG" \
             -var="admin_cidr=$ADMIN_CIDR"
 

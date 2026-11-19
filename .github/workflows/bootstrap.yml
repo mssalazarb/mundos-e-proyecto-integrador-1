@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   TF_IN_AUTOMATION: "true"
@@ -46,6 +46,14 @@ jobs:
       - name: Verificar cuenta de AWS y calcular bucket de estado
         id: acct
         run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "::error::Faltan los secretos AWS_ACCESS_KEY_ID y/o AWS_SECRET_ACCESS_KEY (repositorio o environment 'bootstrap')."
+            exit 1
+          fi
+          if [ -z "${{ vars.AWS_ACCOUNT_ID }}" ]; then
+            echo "::error::Falta la variable AWS_ACCOUNT_ID (Settings > Secrets and variables > Actions > Variables)."
+            exit 1
+          fi
           account="$(aws sts get-caller-identity --query Account --output text)"
           if [ "$account" != "${{ vars.AWS_ACCOUNT_ID }}" ]; then
             echo "::error::Las credenciales pertenecen a la cuenta $account, pero AWS_ACCOUNT_ID=${{ vars.AWS_ACCOUNT_ID }}"
