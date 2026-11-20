@@ -11,6 +11,12 @@ const passwordsGenerated = new client.Counter({
   registers: [register],
 });
 
+const forcedErrors = new client.Counter({
+  name: 'passfly_forced_errors_total',
+  help: 'Errores forzados a propósito (longitud de contraseña = 22) para probar alertas y Grafana',
+  registers: [register],
+});
+
 const httpDuration = new client.Histogram({
   name: 'passfly_http_request_duration_seconds',
   help: 'Duración de las peticiones HTTP',
@@ -28,4 +34,4 @@ function httpMetrics(req, res, next) {
   next();
 }
 
-module.exports = { register, passwordsGenerated, httpMetrics };
+module.exports = { register, passwordsGenerated, forcedErrors, httpMetrics };
