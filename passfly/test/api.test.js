@@ -74,3 +74,9 @@ test('aplica rate limiting', async () => {
   const res = await request(limited).post('/api/v1/passwords').send({});
   assert.equal(res.status, 429);
 });
+
+test('sin HTTPS no fuerza upgrade-insecure-requests ni HSTS (la web carga por HTTP)', async () => {
+  const res = await request(app).get('/');
+  assert.doesNotMatch(res.headers['content-security-policy'], /upgrade-insecure-requests/);
+  assert.equal(res.headers['strict-transport-security'], undefined);
+});

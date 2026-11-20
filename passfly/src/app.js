@@ -12,7 +12,19 @@ function createApp({ rateLimitMax = 60 } = {}) {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
 
-  app.use(helmet());
+  // Sin HTTPS (p. ej. EC2 detrás de HTTP plano) "upgrade-insecure-requests" y HSTS
+  // hacen que el navegador pida CSS/JS por https:443 y la página no cargue.
+  // Se activan solo con HTTPS_ONLY=true (cuando haya certificado/balanceador).
+  const httpsOnly = process.env.HTTPS_ONLY === 'true';
+  app.use(
+    helmet({
+      strictTransportSecurity: httpsOnly,
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: { 'upgrade-insecure-requests': httpsOnly ? [] : null },
+      },
+    }),
+  );
   app.use(httpMetrics);
   app.use(express.json({ limit: '1kb' }));
 
