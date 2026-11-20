@@ -71,6 +71,15 @@ jobs:
         with:
           args: --severity-threshold=high --file=passfly/package.json
 
+      # `snyk test` solo analiza; `snyk monitor` registra el proyecto en app.snyk.io
+      - name: Snyk monitor (registra el proyecto en tu cuenta de Snyk)
+        if: ${{ env.SNYK_TOKEN != '' && github.event_name != 'pull_request' }}
+        uses: snyk/actions/node@master
+        continue-on-error: true # informativo: no debe bloquear el pipeline
+        with:
+          command: monitor
+          args: --file=passfly/package.json --project-name=passfly
+
   build:
     needs: [lint, test, security]
     runs-on: ubuntu-latest
